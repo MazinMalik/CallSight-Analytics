@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+env/
+.venv/
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+dist/
+build/
+
+# Audio / Outputs
+backend/AUDIOS/
+backend/OUTPUTS/
+backend/uploads/
+*.wav
+*.mp3
+*.aac
+*.ogg
+
+# Database
+*.db
+*.sqlite3
+backend/data/*.db
+
+# IDEs and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

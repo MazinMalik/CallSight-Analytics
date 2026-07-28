@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    container_name: telecaller_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DATABASE_URL=sqlite:///./data/telecaller.db
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=qwen3:4b
+      - TRANSCRIPTION_ENGINE=indic_conformer
+      - DEFAULT_TRANSCRIPTION_LANGUAGE=hi
+      - FRONTEND_URL=https://your-app.vercel.app
+    volumes:
+      - telecaller_data:/app/data
+      - telecaller_uploads:/app/uploads
+      - telecaller_exports:/app/exports
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  telecaller_data:
+  telecaller_uploads:
+  telecaller_exports:
