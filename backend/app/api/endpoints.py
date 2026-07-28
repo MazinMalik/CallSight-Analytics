@@ -12,6 +12,8 @@ from sqlalchemy import func, or_
 from app.core.config import settings
 from app.database.session import get_db
 from app.models.call import CallRecord
+from app.models.user import User
+from app.api.auth import get_current_user
 from app.schemas.call import (
     CallCreateResponse, CallStatusResponse, CallDetailSchema, CallListResponse,
     DashboardStatsResponse, CallUpdateSchema, ExtractedInfoSchema, CallStatusEnum
@@ -22,6 +24,15 @@ from app.services.export.csv_exporter import csv_exporter
 from app.workers.job_queue import job_worker
 
 router = APIRouter()
+
+def get_call_record_for_user(db: Session, call_id: str, user: User) -> CallRecord:
+    query = db.query(CallRecord).filter(CallRecord.id == call_id)
+    if user.role == "telecaller":
+        query = query.filter(CallRecord.telecaller_id == user.id)
+    rec = query.first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Call record not found or not accessible.")
+    return rec
 
 @router.get("/health")
 def health_check():
@@ -43,38 +54,51 @@ def health_check():
     }
 
 @router.get("/stats", response_model=DashboardStatsResponse)
-def get_dashboard_stats(db: Session = Depends(get_db)):
+def get_dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Computes aggregated dashboard statistics, distributions, and charts data."""
-    total_calls = db.query(CallRecord).count()
+    base_query = db.query(CallRecord)
+    if current_user.role == "telecaller":
+        base_query = base_query.filter(CallRecord.telecaller_id == current_user.id)
+        
+    total_calls = base_query.count()
     
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    calls_today = db.query(CallRecord).filter(CallRecord.created_at >= today_start).count()
+    calls_today = base_query.filter(CallRecord.created_at >= today_start).count()
 
-    interested_leads = db.query(CallRecord).filter(CallRecord.call_status == "interested").count()
-    orders_confirmed = db.query(CallRecord).filter(CallRecord.call_status == "ordered").count()
-    did_not_pick = db.query(CallRecord).filter(CallRecord.call_status == "did_not_pick").count()
-    follow_ups_required = db.query(CallRecord).filter(
+    interested_leads = base_query.filter(CallRecord.call_status == "interested").count()
+    orders_confirmed = base_query.filter(CallRecord.call_status == "ordered").count()
+    did_not_pick = base_query.filter(CallRecord.call_status == "did_not_pick").count()
+    follow_ups_required = base_query.filter(
         or_(CallRecord.call_status == "follow_up_required", CallRecord.call_status == "callback_requested")
     ).count()
-    processing_failures = db.query(CallRecord).filter(CallRecord.processing_status == "failed").count()
+    processing_failures = base_query.filter(CallRecord.processing_status == "failed").count()
 
     success_rate = round((((total_calls - processing_failures) / total_calls) * 100), 1) if total_calls > 0 else 100.0
 
     # Status distribution
-    status_counts = db.query(CallRecord.call_status, func.count(CallRecord.id)).group_by(CallRecord.call_status).all()
+    status_counts = db.query(CallRecord.call_status, func.count(CallRecord.id))
+    if current_user.role == "telecaller":
+        status_counts = status_counts.filter(CallRecord.telecaller_id == current_user.id)
+    status_counts = status_counts.group_by(CallRecord.call_status).all()
     status_dist = {s or "unclear": count for s, count in status_counts}
 
     # Telecaller distribution
-    tc_counts = db.query(CallRecord.telecaller_name, func.count(CallRecord.id)).group_by(CallRecord.telecaller_name).all()
+    tc_counts = db.query(CallRecord.telecaller_name, func.count(CallRecord.id))
+    if current_user.role == "telecaller":
+        tc_counts = tc_counts.filter(CallRecord.telecaller_id == current_user.id)
+    tc_counts = tc_counts.group_by(CallRecord.telecaller_name).all()
     calls_per_tc = {tc or "Telecaller": count for tc, count in tc_counts}
 
     # Business category distribution
-    cat_counts = db.query(CallRecord.business_category, func.count(CallRecord.id)).group_by(CallRecord.business_category).all()
+    cat_counts = db.query(CallRecord.business_category, func.count(CallRecord.id))
+    if current_user.role == "telecaller":
+        cat_counts = cat_counts.filter(CallRecord.telecaller_id == current_user.id)
+    cat_counts = cat_counts.group_by(CallRecord.business_category).all()
     calls_per_cat = {cat or "Uncategorized": count for cat, count in cat_counts}
 
     # Calls per day (last 7 days)
     seven_days_ago = today_start - timedelta(days=6)
-    daily_records = db.query(CallRecord.created_at).filter(CallRecord.created_at >= seven_days_ago).all()
+    daily_records = base_query.filter(CallRecord.created_at >= seven_days_ago).all()
     calls_per_day = {}
     for i in range(7):
         day_str = (seven_days_ago + timedelta(days=i)).strftime("%Y-%m-%d")
@@ -86,7 +110,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
                 calls_per_day[day_str] += 1
 
     # Recent calls
-    recent_records = db.query(CallRecord).order_by(CallRecord.created_at.desc()).limit(5).all()
+    recent_records = base_query.order_by(CallRecord.created_at.desc()).limit(5).all()
 
     return DashboardStatsResponse(
         total_calls=total_calls,
@@ -106,17 +130,16 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
 
 @router.post("/calls", response_model=CallCreateResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_call_record(
-    telecaller_name: Optional[str] = Form(None),
     company_name: Optional[str] = Form(None),
     phone_number: Optional[str] = Form(None),
     category: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Validates upload file. All metadata fields are non-compulsory except for the audio file upload.
-    Enqueues background job for isolated audio transcription.
+    Validates upload file. Enqueues background job for isolated audio transcription.
     """
     file_bytes = await file.read()
     file_size = len(file_bytes)
@@ -136,7 +159,8 @@ async def upload_call_record(
 
     call_record = CallRecord(
         id=call_id,
-        telecaller_name=telecaller_name.strip() if telecaller_name and telecaller_name.strip() else "Telecaller",
+        telecaller_id=current_user.id,
+        telecaller_name=current_user.name,
         company_name=company_name.strip() if company_name and company_name.strip() else "Unspecified Company",
         submitted_phone_number=phone_number.strip() if phone_number and phone_number.strip() else "N/A",
         submitted_category=category.strip() if category and category.strip() else None,
@@ -170,11 +194,15 @@ def list_calls(
     search: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     query = db.query(CallRecord)
+    
+    if current_user.role == "telecaller":
+        query = query.filter(CallRecord.telecaller_id == current_user.id)
 
-    if telecaller:
+    if telecaller and current_user.role == "admin":
         query = query.filter(CallRecord.telecaller_name == telecaller)
     if status:
         query = query.filter(CallRecord.call_status == status)
@@ -217,17 +245,13 @@ def list_calls(
     )
 
 @router.get("/calls/{call_id}", response_model=CallDetailSchema)
-def get_call_detail(call_id: str, db: Session = Depends(get_db)):
-    rec = db.query(CallRecord).filter(CallRecord.id == call_id).first()
-    if not rec:
-        raise HTTPException(status_code=404, detail="Call record not found.")
+def get_call_detail(call_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    rec = get_call_record_for_user(db, call_id, current_user)
     return CallDetailSchema.model_validate(rec)
 
 @router.get("/calls/{call_id}/status", response_model=CallStatusResponse)
-def get_call_status(call_id: str, db: Session = Depends(get_db)):
-    rec = db.query(CallRecord).filter(CallRecord.id == call_id).first()
-    if not rec:
-        raise HTTPException(status_code=404, detail="Call record not found.")
+def get_call_status(call_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    rec = get_call_record_for_user(db, call_id, current_user)
     return CallStatusResponse(
         call_id=rec.id,
         processing_status=rec.processing_status,
@@ -241,11 +265,10 @@ def get_call_status(call_id: str, db: Session = Depends(get_db)):
 def update_call_record(
     call_id: str,
     update_data: CallUpdateSchema,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    rec = db.query(CallRecord).filter(CallRecord.id == call_id).first()
-    if not rec:
-        raise HTTPException(status_code=404, detail="Call record not found.")
+    rec = get_call_record_for_user(db, call_id, current_user)
 
     update_dict = update_data.model_dump(exclude_unset=True)
     if "call_status" in update_dict and update_dict["call_status"] is not None:
@@ -257,17 +280,13 @@ def update_call_record(
     rec.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(rec)
-
-    # Refresh CSV
     csv_exporter.refresh_master_csv(db)
 
     return CallDetailSchema.model_validate(rec)
 
 @router.delete("/calls/{call_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_call_record(call_id: str, db: Session = Depends(get_db)):
-    rec = db.query(CallRecord).filter(CallRecord.id == call_id).first()
-    if not rec:
-        raise HTTPException(status_code=404, detail="Call record not found.")
+def delete_call_record(call_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    rec = get_call_record_for_user(db, call_id, current_user)
 
     if rec.audio_path and os.path.exists(rec.audio_path):
         try:
@@ -277,16 +296,12 @@ def delete_call_record(call_id: str, db: Session = Depends(get_db)):
 
     db.delete(rec)
     db.commit()
-
     csv_exporter.refresh_master_csv(db)
     return None
 
 @router.post("/calls/{call_id}/reprocess", response_model=CallStatusResponse)
-async def reprocess_call_lead_extraction(call_id: str, db: Session = Depends(get_db)):
-    """Reruns the transcript through Qwen extraction service."""
-    rec = db.query(CallRecord).filter(CallRecord.id == call_id).first()
-    if not rec:
-        raise HTTPException(status_code=404, detail="Call record not found.")
+async def reprocess_call_lead_extraction(call_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    rec = get_call_record_for_user(db, call_id, current_user)
     if not rec.transcript:
         raise HTTPException(status_code=400, detail="Cannot reprocess: transcript is empty.")
 
@@ -338,11 +353,8 @@ async def reprocess_call_lead_extraction(call_id: str, db: Session = Depends(get
     )
 
 @router.post("/calls/{call_id}/retranscribe", response_model=CallStatusResponse)
-async def retranscribe_call_audio(call_id: str, db: Session = Depends(get_db)):
-    """Reruns original audio through IndicConformer if audio file still exists."""
-    rec = db.query(CallRecord).filter(CallRecord.id == call_id).first()
-    if not rec:
-        raise HTTPException(status_code=404, detail="Call record not found.")
+async def retranscribe_call_audio(call_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    rec = get_call_record_for_user(db, call_id, current_user)
 
     raw_path = Path(rec.audio_path) if rec.audio_path else None
     if not raw_path or not raw_path.exists():
@@ -370,9 +382,12 @@ def download_csv_export(
     category: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """Generates and downloads CSV report matching filter criteria."""
+    if current_user.role == "telecaller":
+        telecaller = current_user.name
+
     filename = f"telecaller_report_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
     export_path = settings.abs_export_dir / filename
 

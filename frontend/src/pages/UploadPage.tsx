@@ -23,7 +23,6 @@ export const UploadPage: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form State (All optional except selectedFile)
-  const [telecallerName, setTelecallerName] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [category, setCategory] = useState('');
@@ -118,7 +117,6 @@ export const UploadPage: React.FC = () => {
       setIsSubmitting(true);
       setCompletedRecord(null);
       const formData = new FormData();
-      if (telecallerName.trim()) formData.append('telecaller_name', telecallerName.trim());
       if (companyName.trim()) formData.append('company_name', companyName.trim());
       if (phoneNumber.trim()) formData.append('phone_number', phoneNumber.trim());
       if (category) formData.append('category', category);
@@ -144,7 +142,6 @@ export const UploadPage: React.FC = () => {
     setCompletedRecord(null);
     setSelectedFile(null);
     setAudioPreviewUrl(null);
-    setTelecallerName('');
     setCompanyName('');
     setPhoneNumber('');
     setCategory('');
@@ -378,19 +375,6 @@ export const UploadPage: React.FC = () => {
               Optional Metadata Details (Non-compulsory)
             </h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">
-                  Telecaller Name (Optional)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Rahul Sharma"
-                  value={telecallerName}
-                  onChange={(e) => setTelecallerName(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500"
-                />
-              </div>
-
               <div>
                 <label className="block text-xs font-medium text-slate-400 mb-1">
                   Company Name (Optional)

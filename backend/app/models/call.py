@@ -12,6 +12,7 @@ class CallRecord(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     
     # Metadata submitted at upload (only audio is mandatory, rest optional)
+    telecaller_id = Column(String(36), nullable=True, index=True) # Foreign key to User.id (if authenticated)
     telecaller_name = Column(String(255), nullable=True, default="Telecaller", index=True)
     company_name = Column(String(255), nullable=True, default="Unspecified Company", index=True)
     submitted_phone_number = Column(String(50), nullable=True, default="N/A", index=True)
@@ -60,6 +61,7 @@ class CallRecord(Base):
 
     __table_args__ = (
         Index("idx_calls_created_at", "created_at"),
+        Index("idx_calls_telecaller_id", "telecaller_id"),
         Index("idx_calls_telecaller", "telecaller_name"),
         Index("idx_calls_company", "company_name"),
         Index("idx_calls_phone", "submitted_phone_number"),

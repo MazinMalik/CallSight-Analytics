@@ -3,8 +3,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.database.session import engine, Base
-from app.api.endpoints import router as api_router
+from app.database.session import engine, Base, SessionLocal
+from app.api import endpoints, auth, users
+from app.models.user import User
+from app.core import security
 from app.workers.job_queue import job_worker
 
 # Configure logger
@@ -13,9 +15,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("main")
-
-# Auto-create tables on startup
-Base.metadata.create_all(bind=engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -49,7 +48,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(api_router, prefix="/api")
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(users.router, prefix="/api/users", tags=["users"])
+app.include_router(endpoints.router, prefix="/api")
+
+@app.on_event("startup")
+def on_startup():
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.login_id == "admin").first()
+        if not admin:
+            admin = User(
+                login_id="admin",
+                name="System Administrator",
+                hashed_password=security.get_password_hash("admin123"),
+                role="admin"
+            )
+            db.add(admin)
+            db.commit()
+            logger.info("Default admin user created (admin / admin123)")
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     import uvicorn

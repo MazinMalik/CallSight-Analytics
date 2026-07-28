@@ -9,9 +9,13 @@ import {
   Activity, 
   Sparkles,
   Menu,
-  X
+  X,
+  Users,
+  LogOut
 } from 'lucide-react';
 import { fetchHealth } from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 export const DashboardLayout: React.FC = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -31,11 +35,20 @@ export const DashboardLayout: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
   const navItems = [
     { to: '/', label: 'Overview', icon: LayoutDashboard },
     { to: '/upload', label: 'Upload Call', icon: Upload },
     { to: '/calls', label: 'All Calls', icon: PhoneCall },
     { to: '/export', label: 'CSV Exports', icon: FileSpreadsheet },
+    ...(user?.role === 'admin' ? [{ to: '/users', label: 'Users', icon: Users }] : []),
     { to: '/settings', label: 'Settings', icon: Settings },
   ];
 
@@ -94,6 +107,23 @@ export const DashboardLayout: React.FC = () => {
             Model: {healthStatus?.model || 'qwen3:4b'}
           </p>
         </div>
+
+        <div className="mt-4 border-t border-slate-800 pt-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-sky-400 font-bold">
+                {user?.name.charAt(0).toUpperCase()}
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xs font-semibold text-white">{user?.name}</span>
+                <span className="text-[10px] text-slate-400 capitalize">{user?.role}</span>
+              </div>
+            </div>
+            <button onClick={handleLogout} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition-colors" title="Logout">
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       </aside>
 
       {/* Mobile Header */}
@@ -131,6 +161,15 @@ export const DashboardLayout: React.FC = () => {
               </NavLink>
             );
           })}
+          <div className="pt-2 border-t border-slate-800">
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-400 hover:text-white w-full text-left"
+            >
+              <LogOut className="h-4 w-4" />
+              Logout
+            </button>
+          </div>
         </div>
       )}
 
