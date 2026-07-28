@@ -1,4 +1,4 @@
-# AI Telecaller Call Recording, Transcription & Lead Extraction System
+# CallSight Analytics: AI Telecaller Transcription & Extraction System
 
 A complete, production-ready full-stack application for telecaller call recording processing, IndicConformer speech-to-text transcription, Qwen 4B local LLM lead extraction via Ollama, SQLite storage, and CSV reporting.
 
@@ -63,7 +63,7 @@ c:\Users\malik\OneDrive\Desktop\indian guy project/
 │   ├── vite.config.ts
 │   ├── tailwind.config.js
 │   └── vercel.json
-├── backend/                      # Python FastAPI Backend
+├── backend/                      # CallSight Analytics
 │   ├── app/
 │   │   ├── api/                  # REST endpoints
 │   │   ├── core/                 # Config & settings
